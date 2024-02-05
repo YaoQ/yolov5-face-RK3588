@@ -4,9 +4,16 @@
 #include <stdint.h>
 #include <vector>
 
+#define FACE   //配置人脸检测
+
+#ifdef FACE 
+    #define OBJ_CLASS_NUM     11   //10个点，外加1个类，所以配置成11，以对齐普通的检测
+#else 
+    #define OBJ_CLASS_NUM     80
+#endif
+
 #define OBJ_NAME_MAX_SIZE 16
 #define OBJ_NUMB_MAX_SIZE 64
-#define OBJ_CLASS_NUM     80
 #define NMS_THRESH        0.45
 #define BOX_THRESH        0.25
 #define PROP_BOX_SIZE     (5+OBJ_CLASS_NUM)
@@ -23,6 +30,7 @@ typedef struct __detect_result_t
 {
     char name[OBJ_NAME_MAX_SIZE];
     BOX_RECT box;
+    int landmarks[10];
     float prop;
 } detect_result_t;
 

@@ -292,15 +292,24 @@ int main(int argc, char** argv)
     int y1 = det_result->box.top;
     int x2 = det_result->box.right;
     int y2 = det_result->box.bottom;
-    rectangle(orig_img, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(255, 0, 0, 255), 3);
-    putText(orig_img, text, cv::Point(x1, y1 + 12), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
+    rectangle(orig_img, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(255, 0, 0, 255), 2);
+    
+    #ifdef FACE
+    for(int i =0; i < 5 ; i ++)
+    {
+      int x = int(det_result->landmarks[i*2]);
+      int y = int(det_result->landmarks[i*2+1]);
+      circle(orig_img, cv::Point(x, y), 2, cv::Scalar(0, 255, 0, 255), 2);
+    }
+    #endif
+    putText(orig_img, text, cv::Point(x1, y1 + 12), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255));
   }
 
   imwrite("./out.jpg", orig_img);
   ret = rknn_outputs_release(ctx, io_num.n_output, outputs);
 
   // loop test
-  int test_count = 10;
+  int test_count = 1;
   gettimeofday(&start_time, NULL);
   for (int i = 0; i < test_count; ++i) {
     rknn_inputs_set(ctx, io_num.n_input, inputs);

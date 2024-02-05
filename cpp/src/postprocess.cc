@@ -20,16 +20,28 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <iostream>
 
 #include <set>
 #include <vector>
-#define LABEL_NALE_TXT_PATH "./model/coco_80_labels_list.txt"
+
+using namespace std;
 
 static char* labels[OBJ_CLASS_NUM];
 
+#ifdef FACE //coco 检测锚框
+#define LABEL_NALE_TXT_PATH "./model/face.txt"
+const int anchor0[6] = {4,5,  8,10,  13,16};
+const int anchor1[6] = {23,29,  43,55,  73,105};
+const int anchor2[6] = {146,217,  231,300,  335,433};
+
+#else //face 检测锚框
+#define LABEL_NALE_TXT_PATH "./model/coco_80_labels_list.txt"
 const int anchor0[6] = {10, 13, 16, 30, 33, 23};
 const int anchor1[6] = {30, 61, 62, 45, 59, 119};
 const int anchor2[6] = {116, 90, 156, 198, 373, 326};
+
+#endif 
 
 inline static int clamp(float val, int min, int max) { return val > min ? (val < max ? val : max) : min; }
 
@@ -187,13 +199,15 @@ static int8_t qnt_f32_to_affine(float f32, int32_t zp, float scale)
 static float deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) { return ((float)qnt - (float)zp) * scale; }
 
 static int process(int8_t* input, int* anchor, int grid_h, int grid_w, int height, int width, int stride,
-                   std::vector<float>& boxes, std::vector<float>& objProbs, std::vector<int>& classId, float threshold,
+                   std::vector<float>& boxes, std::vector<float>& landmarks, std::vector<float>& objProbs, std::vector<int>& classId, float threshold,
                    int32_t zp, float scale)
 {
   int    validCount = 0;
   int    grid_len   = grid_h * grid_w;
   float  thres      = unsigmoid(threshold);
   int8_t thres_i8   = qnt_f32_to_affine(thres, zp, scale);
+  float landmark_x[5];
+  float landmark_y[5];
   for (int a = 0; a < 3; a++) {
     for (int i = 0; i < grid_h; i++) {
       for (int j = 0; j < grid_w; j++) {
@@ -205,6 +219,17 @@ static int process(int8_t* input, int* anchor, int grid_h, int grid_w, int heigh
           float   box_y  = sigmoid(deqnt_affine_to_f32(in_ptr[grid_len], zp, scale)) * 2.0 - 0.5;
           float   box_w  = sigmoid(deqnt_affine_to_f32(in_ptr[2 * grid_len], zp, scale)) * 2.0;
           float   box_h  = sigmoid(deqnt_affine_to_f32(in_ptr[3 * grid_len], zp, scale)) * 2.0;
+
+          //calculate landmarks
+          #ifdef FACE
+          for (int z = 0; z < 5; z ++){
+            landmark_x[z] = deqnt_affine_to_f32(in_ptr[(5 + z *2) * grid_len], zp, scale) ;
+            landmark_y[z] = deqnt_affine_to_f32(in_ptr[(6 + z *2) * grid_len], zp, scale) ;
+            landmark_x[z] = (landmark_x[z])* (float)anchor[a * 2] + (float)j * (float)stride;
+            landmark_y[z] = (landmark_y[z])* (float)anchor[a * 2 + 1] + (float)i * (float)stride;
+          }
+          #endif
+
           box_x          = (box_x + j) * (float)stride;
           box_y          = (box_y + i) * (float)stride;
           box_w          = box_w * box_w * (float)anchor[a * 2];
@@ -229,6 +254,13 @@ static int process(int8_t* input, int* anchor, int grid_h, int grid_w, int heigh
             boxes.push_back(box_y);
             boxes.push_back(box_w);
             boxes.push_back(box_h);
+
+            #ifdef FACE
+            for (int m = 0; m < 5; m++){
+              landmarks.push_back(landmark_x[m]);
+              landmarks.push_back(landmark_y[m]);
+            }
+            #endif
           }
         }
       }
@@ -254,6 +286,7 @@ int post_process(int8_t* input0, int8_t* input1, int8_t* input2, int model_in_h,
   memset(group, 0, sizeof(detect_result_group_t));
 
   std::vector<float> filterBoxes;
+  std::vector<float> landmarks;
   std::vector<float> objProbs;
   std::vector<int>   classId;
 
@@ -262,7 +295,7 @@ int post_process(int8_t* input0, int8_t* input1, int8_t* input2, int model_in_h,
   int grid_h0     = model_in_h / stride0;
   int grid_w0     = model_in_w / stride0;
   int validCount0 = 0;
-  validCount0 = process(input0, (int*)anchor0, grid_h0, grid_w0, model_in_h, model_in_w, stride0, filterBoxes, objProbs,
+  validCount0 = process(input0, (int*)anchor0, grid_h0, grid_w0, model_in_h, model_in_w, stride0, filterBoxes, landmarks, objProbs,
                         classId, conf_threshold, qnt_zps[0], qnt_scales[0]);
 
   // stride 16
@@ -270,7 +303,7 @@ int post_process(int8_t* input0, int8_t* input1, int8_t* input2, int model_in_h,
   int grid_h1     = model_in_h / stride1;
   int grid_w1     = model_in_w / stride1;
   int validCount1 = 0;
-  validCount1 = process(input1, (int*)anchor1, grid_h1, grid_w1, model_in_h, model_in_w, stride1, filterBoxes, objProbs,
+  validCount1 = process(input1, (int*)anchor1, grid_h1, grid_w1, model_in_h, model_in_w, stride1, filterBoxes, landmarks, objProbs,
                         classId, conf_threshold, qnt_zps[1], qnt_scales[1]);
 
   // stride 32
@@ -278,7 +311,7 @@ int post_process(int8_t* input0, int8_t* input1, int8_t* input2, int model_in_h,
   int grid_h2     = model_in_h / stride2;
   int grid_w2     = model_in_w / stride2;
   int validCount2 = 0;
-  validCount2 = process(input2, (int*)anchor2, grid_h2, grid_w2, model_in_h, model_in_w, stride2, filterBoxes, objProbs,
+  validCount2 = process(input2, (int*)anchor2, grid_h2, grid_w2, model_in_h, model_in_w, stride2, filterBoxes, landmarks, objProbs,
                         classId, conf_threshold, qnt_zps[2], qnt_scales[2]);
 
   int validCount = validCount0 + validCount1 + validCount2;
@@ -321,12 +354,26 @@ int post_process(int8_t* input0, int8_t* input1, int8_t* input2, int model_in_h,
     group->results[last_count].box.right  = (int)(clamp(x2, 0, model_in_w) / scale_w);
     group->results[last_count].box.bottom = (int)(clamp(y2, 0, model_in_h) / scale_h);
     group->results[last_count].prop       = obj_conf;
+
+    #ifdef FACE
+    for(int i =0; i < 5; i ++){
+        group->results[last_count].landmarks[i * 2] = (int) clamp(landmarks[n * 10 + i * 2], 0, model_in_w) / scale_w;
+        group->results[last_count].landmarks[i * 2 + 1] = (int) clamp(landmarks[n * 10 + i * 2 + 1], 0, model_in_h) / scale_h;
+    }
+    #endif
+
     char* label                           = labels[id];
     strncpy(group->results[last_count].name, label, OBJ_NAME_MAX_SIZE);
 
-    // printf("result %2d: (%4d, %4d, %4d, %4d), %s\n", i, group->results[last_count].box.left,
-    // group->results[last_count].box.top,
-    //        group->results[last_count].box.right, group->results[last_count].box.bottom, label);
+    /*
+    printf("%d, facebox: (%4d, %4d, %4d, %4d)\n",i, group->results[last_count].box.left, 
+      group->results[last_count].box.top, 
+      group->results[last_count].box.right,
+      group->results[last_count].box.bottom);
+
+    printf("%d landmarks : (%4d, %4d), \n", i, group->results[last_count].landmarks[0],
+      group->results[last_count].landmarks[1]);
+    */
     last_count++;
   }
   group->count = last_count;
